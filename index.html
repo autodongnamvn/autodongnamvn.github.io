@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Nhắc việc Auto Đông Nam</title>
+<meta name="description" content="Ứng dụng nhắc việc nội bộ Auto Đông Nam">
+<meta name="theme-color" content="#1f4e79">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Nhắc việc">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>
+  :root{--pri:#1f4e79;--ink:#1c2430;--mute:#6b7685}
+  html,body{margin:0;height:100%;background:#1f4e79;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+  body{display:flex;flex-direction:column;padding-top:env(safe-area-inset-top)}
+  #app{flex:1;width:100%;border:0;background:#f3f5f8;display:block}
+  #bar{display:none;background:#fff;border-top:1px solid #e3e7ed;padding:10px 14px calc(10px + env(safe-area-inset-bottom));font-size:14px;color:var(--ink);align-items:center;gap:10px}
+  #bar.show{display:flex}
+  #bar .txt{flex:1;line-height:1.4}
+  #bar button{border:0;border-radius:8px;padding:9px 14px;font-size:14px;font-weight:600;cursor:pointer}
+  #bar .go{background:var(--pri);color:#fff}
+  #bar .x{background:none;color:var(--mute);padding:6px 8px;font-size:18px}
+  #loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;background:#1f4e79;color:#fff;font-size:15px;z-index:5;transition:opacity .3s}
+  #loading img{width:72px;height:72px;border-radius:16px}
+</style>
+<script src="config.js"></script>
+</head>
+<body>
+<div id="loading"><img src="icon-192.png" alt=""><div>Đang mở Nhắc việc…</div></div>
+<iframe id="app" title="Nhắc việc" allow="clipboard-write"></iframe>
+<div id="bar"><div class="txt" id="barTxt"></div><button class="go" id="barBtn" style="display:none"></button><button class="x" id="barX" aria-label="Đóng">×</button></div>
+
+<script>
+(function () {
+  var C = window.NV_CONFIG || {};
+  var KEY_TOK = 'nv_shell_tok', KEY_EMAIL = 'nv_shell_email', KEY_HIDE = 'nv_bar_hidden_until';
+  function get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} }
+
+  // 1) Nhận phiên đăng nhập từ link email (?s=...) rồi xoá khỏi thanh địa chỉ
+  var qs = new URLSearchParams(location.search);
+  if (qs.get('s')) { set(KEY_TOK, qs.get('s')); history.replaceState(null, '', location.pathname); }
+
+  // 2) Mở app Apps Script bên trong khung, kèm phiên đã lưu
+  var tok = get(KEY_TOK);
+  var frame = document.getElementById('app');
+  frame.src = C.EXEC_URL + (tok ? '?s=' + encodeURIComponent(tok) : '');
+  frame.addEventListener('load', function () {
+    var l = document.getElementById('loading'); l.style.opacity = 0; setTimeout(function () { l.style.display = 'none'; }, 300);
+  });
+
+  // 3) Thông báo đẩy qua OneSignal
+  var isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  var standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  var pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  var OS = null;
+  if (C.ONESIGNAL_APP_ID && pushSupported) {
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    var s = document.createElement('script');
+    s.src = 'https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js'; s.defer = true;
+    document.head.appendChild(s);
+    OneSignalDeferred.push(function (OneSignal) {
+      return OneSignal.init({ appId: C.ONESIGNAL_APP_ID, allowLocalhostAsSecureOrigin: true, notifyButton: { enable: false } })
+        .then(function () {
+          OS = OneSignal;
+          var em = get(KEY_EMAIL);
+          if (em) OneSignal.login(em);
+          OneSignal.Notifications.addEventListener('permissionChange', updateBar);
+          updateBar();
+        });
+    });
+  }
+
+  // 4) App báo đăng nhập / đăng xuất
+  window.addEventListener('message', function (e) {
+    if (!/(\.googleusercontent\.com|script\.google\.com)$/.test(new URL(e.origin).hostname)) return;
+    var m = e.data || {};
+    if (m.type === 'nv-login' && m.email) {
+      if (m.token) set(KEY_TOK, m.token);
+      if (get(KEY_EMAIL) !== m.email) { set(KEY_EMAIL, m.email); if (OS) OS.login(m.email); }
+      updateBar();
+    } else if (m.type === 'nv-logout') {
+      set(KEY_TOK, null); set(KEY_EMAIL, null);
+      if (OS) OS.logout();
+      updateBar();
+    }
+  });
+
+  // 5) Thanh gợi ý dưới đáy
+  var bar = document.getElementById('bar'), txt = document.getElementById('barTxt'), btn = document.getElementById('barBtn');
+  document.getElementById('barX').onclick = function () { set(KEY_HIDE, String(Date.now() + 3 * 86400000)); bar.classList.remove('show'); };
+  function show(message, label, action) {
+    if (Number(get(KEY_HIDE) || 0) > Date.now()) return;
+    txt.innerHTML = message;
+    if (label) { btn.textContent = label; btn.style.display = ''; btn.onclick = action; } else btn.style.display = 'none';
+    bar.classList.add('show');
+  }
+  function updateBar() {
+    bar.classList.remove('show');
+    if (!get(KEY_EMAIL)) return;
+    if (isIOS && !standalone) {
+      return show('📲 Để nhận thông báo trên iPhone: bấm nút <b>Chia sẻ</b> ⬆️ rồi chọn <b>Thêm vào MH chính</b>, sau đó mở app từ biểu tượng.');
+    }
+    if (!pushSupported || !C.ONESIGNAL_APP_ID) return;
+    var p = Notification.permission;
+    if (p === 'default') {
+      show('🔔 Bật thông báo để nhận việc mới và lời nhắc hằng ngày.', 'Bật thông báo', function () {
+        if (OS) OS.Notifications.requestPermission().then(updateBar); else Notification.requestPermission().then(updateBar);
+      });
+    } else if (p === 'denied') {
+      show('🔕 Thông báo đang bị chặn. Vào Cài đặt của trình duyệt / điện thoại để cho phép lại.');
+    }
+  }
+  updateBar();
+
+  if ('serviceWorker' in navigator && !C.ONESIGNAL_APP_ID) {
+    navigator.serviceWorker.register('OneSignalSDKWorker.js').catch(function () {});
+  }
+})();
+</script>
+</body>
+</html>
