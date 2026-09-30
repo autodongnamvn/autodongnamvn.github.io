@@ -1,7 +1,7 @@
 {
-  "name": "Nhắc việc Auto Đông Nam",
-  "short_name": "Nhắc việc",
-  "description": "Ứng dụng nhắc việc nội bộ Auto Đông Nam",
+  "name": "Quản lý công việc Auto Đông Nam",
+  "short_name": "Quản lý CV",
+  "description": "Ứng dụng quản lý công việc nội bộ Auto Đông Nam",
   "lang": "vi",
   "start_url": "./",
   "scope": "./",
